@@ -1,0 +1,1891 @@
+---
+title: "Detailed Look at the Model"
+author: "Johannes Nakayama"
+date: "14 9 2020"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+## Setup
+
+For this analysis, the following packages were used: `tidyverse`, `magrittr`, `ggpubr`, `igraph`, `viridis`. Some additional functions to support the work flow and reduce code complexity were written. They are located in the script `helpers.R`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+# load libraries ---
+library(tidyverse)
+library(magrittr)
+library(ggpubr)
+library(igraph)
+library(viridis)
+
+# process / load data ---
+if (!("data.RData" %in% list.files())) {source("data_processing.R")}
+load("data.RData")
+
+# load helper functions ---
+source(file.path("..", "helpers.R"))
+
+# plot specifications ---
+SAVE <- TRUE
+EXPERIMENT_PREFIX <- "detail"
+RESOLUTION_DPI <- 300
+THEME_DESIGN <- 2
+plot_no <- 0
+
+# create directories ---
+dir.create("graphics", showWarnings = FALSE)
+dir.create(file.path("graphics", "pdf"), showWarnings = FALSE)
+dir.create(file.path("graphics", "png"), showWarnings = FALSE)
+```
+
+
+
+
+
+
+## Datasets
+
+The following code reads all the required datasets and formats them according to the requirements of the visualizations. This should result in the following datasets:
+
+  * `config`: all the configurations of the simulations [dataframe]
+  * `summary_statistics`: summary statistics on all simulation runs [dataframe]
+  * `summary_statistics_aggregated`: summary statistics on all simulation runs aggregated by replicate [dataframe]
+  * `mdata`: model data of all simulation runs [dataframe]
+  * `mdata_long`: model data of all simulation runs in long format [dataframe]
+  * `mdata_summarized`: model data of all simulation runs summarized by replicate [dataframe]
+  * `mdata_summarized_long`: model data of all simulation runs summarized by replicate in long format [dataframe]
+  * `summary_agent_states`: summary of the agent states over simulation time [dataframe]
+  * `agent_attributes`: fixed attributes of the agents [dataframe]
+  * `agent_dynamics`: dynamics attributes of agents over simulation time [dataframe]
+  * `summary_graphs`: summary statistics of the graphs [dataframe]
+
+```{r inspect-datasets, eval=FALSE}
+agent_attributes
+agent_dynamics
+config
+mdata
+mdata_long
+mdata_summarized
+mdata_summarized_long
+summary_graphs
+summary_statistics
+summary_statistics_aggregated
+summary_agent_states
+```
+
+
+
+
+
+
+
+## General Remarks
+
+There are two concepts of time in the following analysis: steps and days. In the model implementation, ten steps form one day. In the analysis, the data have been aggregated where appropriate.
+
+In many of the code blocks, the datasets are slightly modified to be suitable for visualization. These temporary datasets are named `tmp`. 
+
+There are two ways in which the dynamics of the epidemics are displayed: either as new cases per day or as count of agents that are infectious that day (or step respectively).  
+
+Besides three factors, all configuration setups have been held constant for the experiments in this analysis. The default values are:
+  
+  * `Nodes`: 300
+  * `N0`: `3
+  * `K`: 3
+  * `AgentCount`: 1000
+  * `TransmissionProb`: 0.05
+  * `TestProb`: 0.8
+  * `QuarantineDuration`: 140
+  * `BehaviorReductionFactor`: 0.25
+  * `PublicSpaces`: 100
+  * `InitialInfectives`: 5
+  * `Iterations`: 1000
+
+The other three factors have been varied to form four different configurations, each of which is intended to demonstrate a key dynamic in the model:
+
+  * `config_01` (baseline): 
+    * `BehaviorActivated`: FALSE
+    * `TickAuthorityRecommendation` irrelevant (no behavior)
+    * `TickAuthorityPolicy`: irrelevent (no behavior)
+  
+  * `config_02` (recommendation):
+    * `BehaviorActivated`: TRUE
+    * `TickAuthorityRecommendation` 100
+    * `TickAuthorityPolicy`: 1001 (does not come into effect)
+  
+  * `config_03` (policy):
+    * `BehaviorActivated`: TRUE
+    * `TickAuthorityRecommendation` 1001 (does not come into effect)
+    * `TickAuthorityPolicy`: 100
+    
+  * `config_04` (recommendation and policy):
+    * `BehaviorActivated`: TRUE
+    * `TickAuthorityRecommendation` 100
+    * `TickAuthorityPolicy`: 200
+
+Following, these four experiments will be referred to by the short-hand in the parantheses above.
+
+
+
+
+
+
+## Agent Attributes
+
+An agent has several fixed attributes:
+
+  * `Home`: a node that the agent returns to at the end of one simulation day
+  * `Neuroticism`: the big five trait neuroticism which is related to the agents propensity for fear (normally distributed variable)
+  * `Trust in Authorities`: the agent's trust in authorities which plays a role in the agent's appraisal of the authorities' recommendation (normally distributed)
+  * `Incubation Period`: although this is not technically a fixed attribute, for the sake of the implementation, agents have a fixed incubation period (gamma distributed, empirical basis)
+  * `Infection Duration`: also not technically a fixed attribute, but implemented this way for the same reasons (poisson distributed)
+  
+```{r agent-attributes-1-plot}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "agent_attributes")
+width <- 8
+height <- 5
+color_scheme <- "black"
+
+# plotting ---
+agent_attributes %>% 
+  ggplot(aes(x = Neuroticism)) +
+    geom_histogram(
+      aes(y = ..density..), fill = color_scheme, color = color_scheme, alpha = 0.5, size = 0.8, bins = 33
+    ) +
+    scale_y_continuous(breaks = seq(0, 10, by = 0.5), limits = c(0, 2.5)) +
+    labs(title = "Distribution of neuroticism", x = "Neuroticism", y = "KDE") +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 10, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 10, margin = margin(l = 20, r = 5))
+    ) +
+    NULL -> p1
+
+agent_attributes %>% 
+  ggplot(aes(x = TrustAuthorities)) +
+    geom_histogram(
+      aes(y = ..density..), fill = color_scheme, color = color_scheme, alpha = 0.5, size = 0.8, bins = 33
+    ) +
+    scale_y_continuous(breaks = seq(0, 10, by = 0.5), limits = c(0, 2.5)) +
+    labs(title = "Distribution of trust in authorities", x = "Trust in authorities", y = "KDE") +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 10, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 10, margin = margin(l = 20, r = 5))
+    ) +
+    NULL -> p2
+
+agent_attributes %>% 
+  ggplot(aes(x = IncubationPeriod / 10)) +
+    geom_histogram(
+      aes(y = ..density..), fill = color_scheme, color = color_scheme, alpha = 0.5, size = 0.8, bins = 33
+    ) +
+    scale_y_continuous(breaks = seq(0, 10, by = 0.05), limits = c(0, 0.25)) +
+    labs(title = "Distribution of incubation periods", x = "Incubation period [days]", y = "KDE") +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 10, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 10, margin = margin(l = 20, r = 5))
+    ) +
+    NULL -> p3
+
+agent_attributes %>% 
+  ggplot(aes(x = InfectionDuration / 10)) +
+    geom_histogram(
+      aes(y = ..density..), fill = color_scheme, color = color_scheme, alpha = 0.5, size = 0.8, bins = 33
+    ) +
+    scale_x_continuous(breaks = seq(0, 100, by = 5)) +
+    scale_y_continuous(breaks = seq(0, 10, by = 0.025), limits = c(0, 0.1)) +
+    labs(title = "Distribution of infection durations", x = "Infection duration [days]", y = "KDE") +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 10, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 10, margin = margin(l = 20, r = 5))
+    ) +
+    NULL -> p4
+
+ggarrange(p1, p2, p3, p4, labels = c("A", "B", "C", "D"), ncol = 2, nrow = 2) %>% 
+  annotate_figure(bottom = text_grob("KDE = kernel density estimation", hjust = 1, x = 1)) + 
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(color_scheme, filename, height, p1, p2, p3, p4, width)
+```
+
+* *Caption:* Distributions of the fixed agent attributes aggregated over all four configurations. 
+* *Writing Points:* normal distributions of neuroticism and trust in authorities, gamma distribution of incubation periods -> reference empirical data for modelling -> mean might be a bit early, lastly poisson distributions of infection durations -> distribution around mean
+
+The following table contains summary statistics (by `Config` and `Replicate`) of incubation periods and infection durations.
+
+```{r agent-attributes-2-table-1}
+agent_attributes %>% 
+  group_by(Config, Replicate) %>% 
+  summarize(
+    MinIncubationPeriod = min(IncubationPeriod),
+    MaxIncubationPeriod = max(IncubationPeriod),
+    MeanIncubationPeriod = mean(IncubationPeriod),
+    MinInfectionDuration = min(InfectionDuration),
+    MaxInfectionDuration = max(InfectionDuration),
+    MeanInfectionDuration = mean(InfectionDuration)
+  ) %>% 
+  ungroup()
+```
+
+These values are once again summarized by `Config` in the next table.
+
+```{r agent-attributes-3-table-2}
+agent_attributes %>% 
+  group_by(Config, Replicate) %>% 
+  summarize(
+    MinIncubationPeriod = min(IncubationPeriod),
+    MaxIncubationPeriod = max(IncubationPeriod),
+    MeanIncubationPeriod = mean(IncubationPeriod),
+    MinInfectionDuration = min(InfectionDuration),
+    MaxInfectionDuration = max(InfectionDuration),
+    MeanInfectionDuration = mean(InfectionDuration)
+  ) %>% 
+  ungroup() %>% 
+  group_by(Config) %>%
+  summarize(
+    MeanMinIncubationPeriod = mean(MinIncubationPeriod),
+    MeanMaxIncubationPeriod = mean(MaxIncubationPeriod),
+    MeanIncubationPeriod = mean(MeanIncubationPeriod),
+    MeanMinInfectionDuration = mean(MinInfectionDuration),
+    MeanMaxInfectionDuration = mean(MaxInfectionDuration),
+    MeanInfectionDuration = mean(MeanInfectionDuration)
+  ) %>% 
+  ungroup()
+```
+
+```{r}
+agent_attributes$Neuroticism %>% mean()
+agent_attributes$Neuroticism %>% sd()
+agent_attributes$TrustAuthorities %>% mean()
+agent_attributes$TrustAuthorities %>% sd()
+agent_attributes$IncubationPeriod %>% mean() / 10
+agent_attributes$IncubationPeriod %>% sd() / 10
+agent_attributes$IncubationPeriod %>% min() / 10
+agent_attributes$IncubationPeriod %>% max() / 10
+agent_attributes$InfectionDuration %>% mean() / 10
+agent_attributes$InfectionDuration %>% sd() / 10
+agent_attributes$InfectionDuration %>% min() / 10
+agent_attributes$InfectionDuration %>% max() / 10
+```
+
+
+
+
+
+
+## Node Visits
+
+The nodes degrees in the network are exponentially distributed. This extends to the node visits during a simulation: Nodes that are highly connected are visited more often.
+
+```{r node-visits-1-plot}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "node_visits")
+width <- 7
+height <- 4
+
+# data formatting ---
+agent_dynamics %>% 
+  select(Config, Replicate, Pos) %>% 
+  anti_join(
+    agent_attributes %>% select(Config, Replicate, Home) %>% rename(Pos = Home),
+    by = c("Config", "Replicate", "Pos")
+  ) %>% 
+  inner_join(
+    summary_graphs %>% select(Config, Replicate, Pos, Rank), 
+    by = c("Config", "Replicate", "Pos")
+  ) -> tmp
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Rank)) + 
+    geom_histogram(aes(y = ..density..), color = "black", fill = "black", alpha = 0.5, size = 0.8, binwidth = 20) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 10, by = 0.002), limits = c(0, 0.0085)) +
+    labs(
+      title = "Distribution of node visits", x = "Rank by degree", y = "KDE",
+      caption = "KDE = kernel density estimation."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 14, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 11, margin = margin(t = 10, b = 10)),
+      axis.title.y = element_text(size = 11, margin = margin(r = 10))
+    ) +
+    NULL
+    
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, tmp, width)
+```
+
+* *Caption:* Nodes with higher degree are visited more often.  
+* *Writing Points:* nodes of each network ranked and then aggregated over all configurations and replicates, the result is a vaguely exponential distribution of node visits, flatter distribution probably due to non-preferential (completely random) attachment of home nodes  
+
+-> THIS IS WHERE THE NETWORKX PLOT GOES <-  
+  
+-> DO SOME NETWORK STATISTICS <-  
+
+
+
+
+
+
+## Fear and Neuroticism
+
+In the simulation, fear is linked to the current number of detected infectives and an agent's neuroticism. The higher an agent scores in neuroticism, the more the number of infectives will affect its fear.
+
+```{r fear-neuroticism-1-plot}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "fear_neuroticism")
+width <- 6
+height <- 3
+config_nr <- "config_01"
+
+# data formatting ---
+agent_attributes %>%
+  filter(Config == config_nr) %>%
+  group_by(Config, Replicate) %>%
+  summarize(Min = min(Neuroticism), Max = max(Neuroticism)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Min, Max), names_to = "Type", values_to = "Neuroticism") %>%
+  inner_join(
+    agent_attributes %>% filter(Config == config_nr) %>% select(Id, Replicate, Neuroticism),
+    by = c("Replicate", "Neuroticism")
+  ) -> fear_dynamics_filter
+
+agent_dynamics %>%
+  filter(Config == config_nr) %>% 
+  select(Config, Replicate, Day, Id, Fear) %>% 
+  inner_join(fear_dynamics_filter, by = c("Id", "Config", "Replicate")) %>% 
+  group_by(Day, Type) %>% 
+  summarize(Fear = mean(Fear)) %>% 
+  ungroup() -> tmp
+
+tmp$Type %<>% 
+  factor(levels = c("Max", "Min")) %>% 
+  recode("Max" = "most neurotic agent", "Min" = "least neurotic agent")
+
+# plotting ---
+tmp  %>% 
+  ggplot(aes(x = Day, y = Fear, color = Type)) +
+    geom_line(alpha = 0.5, size = 2) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 80)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+    scale_color_manual(values = c("least neurotic agent" = "royalblue1", "most neurotic agent" = "red")) +
+    labs(title = "Fear dynamics of least and most neurotic agent", x = "Day", y = "Average fear") +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 11, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 9, margin = margin(t = 10)),
+      axis.title.y = element_text(size = 9, margin = margin(r = 10))
+    ) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, fear_dynamics_filter, filename, height, tmp, width)
+```
+
+* *Caption:* Comparison of the development of fear in the least and the most neurotic agent. The curves show the average case over all replicates in the baseline condition.
+* *Writing Points:* least neurotic agent gets scared way less than most neurotic agent  
+
+```{r fear-neuroticism-2-table}
+agent_attributes %>%
+  filter(Config == "config_01") %>%
+  group_by(Config, Replicate) %>%
+  summarize(MinNeuroticism = min(Neuroticism), MaxNeuroticism = max(Neuroticism)) %>%
+  ungroup()
+```
+
+```{r}
+config_nr <- "config_01"
+
+agent_attributes %>%
+  filter(Config == config_nr) %>%
+  group_by(Config, Replicate) %>%
+  summarize(Min = min(Neuroticism), Max = max(Neuroticism)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Min, Max), names_to = "Type", values_to = "Neuroticism") %>%
+  inner_join(
+    agent_attributes %>% filter(Config == config_nr) %>% select(Id, Replicate, Neuroticism),
+    by = c("Replicate", "Neuroticism")
+  ) -> fear_dynamics_filter
+
+agent_dynamics %>%
+  filter(Config == config_nr) %>% 
+  select(Config, Replicate, Day, Id, Fear) %>% 
+  inner_join(fear_dynamics_filter, by = c("Id", "Config", "Replicate")) %>% 
+  group_by(Day, Type) %>% 
+  summarize(Fear = mean(Fear)) %>% 
+  ungroup() -> tmp
+
+tmp$Type %<>% 
+  factor(levels = c("Max", "Min")) %>% 
+  recode("Max" = "most neurotic agent", "Min" = "least neurotic agent")
+
+tmp %>% 
+  filter(Type == "most neurotic agent") %>% 
+  select(Fear) %>% 
+  max()
+
+tmp %>% 
+  filter(Type == "least neurotic agent") %>% 
+  select(Fear) %>% 
+  max()
+```
+
+
+
+
+
+
+## Trust in Authorities and Behavior
+
+Agents who trust the authorities more are more likely to comply with the authority's recommendation. Less trusting agents will apply the behavior significantly less. As recommendation is the decisive factor with regards to trust in authorities, the following analysis is on the recommendation configuration. 
+
+```{r trust-authorities-behavior-1-plot}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "trust_authorities_behavior")
+width <- 6
+height <- 3
+config_nr <- "config_02"
+n_replicates <- dim(agent_attributes %>% select(Replicate) %>% unique())[1]
+
+# data formatting ---
+agent_attributes %>%
+  filter(Config == config_nr) %>%
+  group_by(Config, Replicate) %>%
+  summarize(Min = min(TrustAuthorities), Max = max(TrustAuthorities)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Min, Max), names_to = "Type", values_to = "TrustAuthorities") %>%
+  inner_join(
+    agent_attributes %>% filter(Config == config_nr) %>% select(Id, Replicate, TrustAuthorities),
+    by = c("Replicate", "TrustAuthorities")
+  ) -> behavior_dynamics_filter
+
+agent_dynamics %>%
+  filter(Config == config_nr) %>% 
+  select(Config, Replicate, Day, Id, Behavior) %>% 
+  inner_join(behavior_dynamics_filter, by = c("Id", "Config", "Replicate")) %>% 
+  group_by(Type, Behavior) %>% 
+  summarize(BehaviorCount = n() / n_replicates) %>% 
+  ungroup() -> tmp
+
+tmp$Type %<>% 
+  factor(levels = c("Min", "Max")) %>% 
+  recode("Min" = "least trusting", "Max" = "most trusting")
+tmp$Behavior %<>% 
+  factor(levels = c("FALSE", "TRUE")) %>% 
+  recode("FALSE" = "no behavior", "TRUE" = "behavior")
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Type, y = BehaviorCount, fill = Behavior)) +
+    geom_bar(stat = "identity", position = "stack", alpha = 0.8) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 100)) +
+    scale_fill_manual(values = c("behavior" = "gold3", "no behavior" = "black")) +
+    labs(
+      title = "Sustained behavior of least and most trusting agent",
+      x = element_blank(), y = "Number of steps",
+      caption = "Recommendation at step 100."
+    ) +
+    coord_flip() +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 11, margin = margin(b = 10)),
+      panel.grid.major.y = element_blank(),
+      axis.title.y = element_text(size = 9, margin = margin(t = 10)),
+      plot.caption = element_text(size = 8, margin = margin(t = 10))
+    ) +
+    theme() +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(behavior_dynamics_filter, config_nr, filename, height, n_replicates, tmp, width)
+```
+
+* *Caption:* Number of steps the average least and most trusting agent applied the behavior. The most trusting agent applied the behavior way more.
+* *Writing Points:* recommendation is what agents take into account, influence on behavior mediated by trust in authorities   
+
+```{r trust-authorities-behavior-2-table}
+agent_attributes %>%
+  filter(Config == "config_02") %>%
+  group_by(Config, Replicate) %>%
+  summarize(MinTrustAuthorities = min(TrustAuthorities), MaxTrustAuthorities = max(TrustAuthorities)) %>%
+  ungroup()
+```
+
+```{r}
+config_nr <- "config_02"
+n_replicates <- dim(agent_attributes %>% select(Replicate) %>% unique())[1]
+
+# data formatting ---
+agent_attributes %>%
+  filter(Config == config_nr) %>%
+  group_by(Config, Replicate) %>%
+  summarize(Min = min(TrustAuthorities), Max = max(TrustAuthorities)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Min, Max), names_to = "Type", values_to = "TrustAuthorities") %>%
+  inner_join(
+    agent_attributes %>% filter(Config == config_nr) %>% select(Id, Replicate, TrustAuthorities),
+    by = c("Replicate", "TrustAuthorities")
+  ) -> behavior_dynamics_filter
+
+agent_dynamics %>%
+  filter(Config == config_nr) %>% 
+  select(Config, Replicate, Day, Id, Behavior) %>% 
+  inner_join(behavior_dynamics_filter, by = c("Id", "Config", "Replicate")) %>% 
+  group_by(Type, Behavior) %>% 
+  summarize(BehaviorCount = n() / n_replicates) %>% 
+  ungroup() -> tmp
+
+tmp$Type %<>% 
+  factor(levels = c("Min", "Max")) %>% 
+  recode("Min" = "least trusting", "Max" = "most trusting")
+tmp$Behavior %<>% 
+  factor(levels = c("FALSE", "TRUE")) %>% 
+  recode("FALSE" = "no behavior", "TRUE" = "behavior")
+
+tmp
+```
+
+
+
+
+
+
+## Course of the Epidemic in the Baseline Condition
+
+The classic SIR model shows the course of an epidemic by tracking the count or the fraction of susceptibles (S), infectives (I), and recovered / removed (R) in the model. The following plot is a visualization of the SIR dynamics in the baseline condition.
+
+```{r sir-baseline-1-plot}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "sir_baseline")
+width <- 8
+height <- 5
+config_nr <- "config_01"
+color_scheme <- c("S" = "blue", "I" = "red", "R" = "black")
+
+# data formatting ---
+mdata_summarized_long %>%
+  filter(Config == config_nr) %>% 
+  filter(
+    Concept == "SCountLower" | Concept == "SCountUpper" | 
+    Concept == "ICountLower" | Concept == "ICountUpper"|
+    Concept == "RCountLower" | Concept == "RCountUpper"
+  ) -> tmp
+
+tmp$Class %<>% 
+  factor(levels = c("SCount", "ICount", "RCount")) %>% 
+  recode("SCount" = "S", "ICount" = "I", "RCount" = "R")
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Step, y = Fraction)) +
+    stat_summary(aes(fill = Class), geom = "ribbon", fun.min = "min", fun.max = "max", alpha = 0.1) +
+    stat_summary(aes(color = Class), geom = "line", size = 0.5, fun = "mean") +
+    scale_x_continuous(breaks = seq(0, 1000, by = 100), limits = c(0, 700)) +
+    scale_fill_manual(values = color_scheme) +
+    scale_color_manual(values = color_scheme) +
+    labs(
+      title = "SIR curves", x = "Step", y = "Fraction of agents", color = "State",
+      caption = "The ribbons indicate the standard error with regards to replicates."
+    ) +
+    guides(fill = FALSE) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(legend.title = element_text())
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(color_scheme, config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* The average course of the epidemic in the baseline condition. All replicates have been aggregated via the arithmetic mean for each step. The ribbons indicate the standard errors.  
+* *Writing Points:* demonstrate the dynamic of an epidemic in the model, establish a baseline, proof of concept that normal SIR model can be reproduced, I contains all infected individuals which includes (E, Iu, Id)     
+
+```{r}
+config_nr <- "config_01"
+
+mdata_summarized_long %>%
+  filter(Config == config_nr) %>% 
+  filter(
+    Concept == "SCountLower" | Concept == "SCountUpper" | 
+    Concept == "ICountLower" | Concept == "ICountUpper"|
+    Concept == "RCountLower" | Concept == "RCountUpper"
+  ) -> tmp
+
+tmp$Class %<>% 
+  factor(levels = c("SCount", "ICount", "RCount")) %>% 
+  recode("SCount" = "S", "ICount" = "I", "RCount" = "R")
+
+tmp %>% 
+  filter(Concept == "ICountLower" | Concept == "ICountUpper") %>% 
+  group_by(Class, Step) %>% 
+  summarize(MeanFraction = mean(Fraction)) %>% 
+  ungroup() %>% 
+  filter(MeanFraction == max(MeanFraction))
+
+tmp %>% 
+  filter(Step == 1000) %>% 
+  filter(Class == "R") %>% 
+  group_by(Step, Class) %>% 
+  summarize(MeanFraction = mean(Fraction)) %>% 
+  ungroup()
+  
+```
+
+The following table contains summary statistics on the baseline condition. 
+
+```{r sir-baseline-2-table}
+summary_statistics %>% 
+  filter(Config == "config_01") %>% 
+  select(
+    -c(
+      BehaviorActivated, AgentCount, Nodes, PublicSpaces, BehaviorReductionFactor, TickAuthorityRecommendation, 
+      TickAuthorityPolicy, TransmissionProb, TestProb, QuarantineDuration
+    )
+  )
+```
+
+
+
+
+
+
+## Contagion Dynamics in the Baseline Condition
+
+```{r baseline-new-cases-1-plot-1}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "baseline_new_cases_1")
+width <- 7
+height <- 7
+config_nr <- "config_01"
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() -> tmp 
+
+tmp$ReplicatePrefix <- "Replicate "
+tmp$Replicate <- paste0(tmp$ReplicatePrefix, tmp$Replicate)
+tmp$Replicate %<>% factor(
+  levels = c("Replicate 1", "Replicate 2", "Replicate 3", "Replicate 4", "Replicate 5")
+)
+tmp %<>% select(-ReplicatePrefix)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", width = 0.6) +
+    facet_grid(rows = vars(Replicate)) +  
+    scale_x_continuous(breaks = seq(0, 100, by = 5), limits = c(0, 50)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 40)) +
+    labs(
+      title = "New cases per day", x = "Day", y = "New cases",
+      caption = "5 replicates from the baseline condition."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(strip.text = element_blank()) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* Five replicates of the baseline condition in comparison. All replicates took a similar course and can thus be aggregated.
+* *Writing Points:* demonstrate that aggregation will yield sensible information, show different replicates for the same configuration
+
+In the next table, some summary statistics on the course of the baseline condition are displayed.
+
+```{r baseline-new-cases-3-table}
+summary_statistics %>% 
+  filter(Config == "config_01") %>% 
+  select(
+    Config, Replicate, PeakInfectiveCount, TickOfPeakInfectiveCount, 
+    DurationOfEpidemic, FractionStillSusceptible, PeakInfectiveFraction
+  )
+```
+
+The next plot contains the aggregation over the baseline condition.
+
+```{r baseline-new-cases-3-plot-2}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "baseline_new_cases_2")
+width <- 6
+height <- 3
+config_nr <- "config_01"
+
+# data formatting ---
+mdata_long %>%
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", width = 0.6) +
+    scale_x_continuous(breaks = seq(0, 100, by = 5), limits = c(0, 50)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20), limits = c(0, 100)) +
+    labs(
+      title = "New cases per day", x = "Day", y = "New cases",
+      caption = "Aggregated over 5 replicates from the baseline condition."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 11, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 9, margin = margin(t = 10)),
+      axis.title.y = element_text(size = 9, margin = margin(r = 10)),
+      plot.caption = element_text(size = 8, margin = margin(t = 10))
+    ) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* The average course of an epidemic under the baseline condition. There is one wave that first shows exponential growth and then quickly drops after the epidemic peaked.
+* *Writing Points:* aggregation works, one wave, peak, trailing end  
+
+These were the contagion dynamics for all cases in general, however, the detection is always a little bit behind.
+
+
+### Detection Lags Behind Actual Cases (Level: Baseline)
+
+```{r baseline-detection-lag-1-plot-1}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "baseline_detection_lag_1")
+width <- 6
+height <- 3
+config_nr <- "config_01"
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal" | Concept == "NewCasesDetected") %>% 
+  group_by(Replicate, Day, Concept) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day, Concept) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+tmp$Concept %<>% recode("NewCasesReal" = "actual new cases", "NewCasesDetected" = "new detected cases")
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(
+      aes(y = Value, fill = Concept), 
+      stat = "identity", position = position_dodge(width = 1), width = 1, alpha = 0.8
+    ) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(-0.5, 61)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20), limits = c(0, 100)) +
+    scale_fill_manual(values = c("new detected cases" = "royalblue1", "actual new cases" = "gold3")) +
+    labs(
+      title = "Lag between actual cases and case detection", x = "Day", y = "New cases",
+      caption = "Aggregated over 5 replicates from the baseline condition."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 11, margin = margin(b = 10)),
+      axis.title.x = element_text(size = 9, margin = margin(t = 10)),
+      axis.title.y = element_text(size = 9, margin = margin(r = 10)),
+      plot.caption = element_text(size = 8, margin = margin(t = 10))
+    ) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* The actual vs. the detected new cases per day aggregated over all replicates of the baseline condition. Detection lags several days behind.
+* *Writing Points:* demonstration of detection lagging behind actual contagion dynamics, lead into incomplete information of agents  
+
+```{r}
+# days in state I_u
+agent_dynamics %>% 
+  filter(State == "Iu") %>% 
+  group_by(Config, Replicate, Id, State) %>% 
+  summarize(StepsInState = n()) %>% 
+  ungroup() %>% 
+  select(StepsInState) %>% 
+  unlist() %>% 
+  mean() / 10
+```
+
+The agents' states are contingent on the information they have which is the number of detected cases.
+
+```{r baseline-detection-lag-2-plot-2}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "baseline_detection_lag_2")
+width <- 7
+height <- 6
+config_nr <- "config_01"
+coeff <- 0.001
+
+# data formatting ---
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  select(Day, FearMean) %>%
+  group_by(Day) %>% 
+  summarize(FearMean = mean(FearMean)) %>% 
+  ungroup() -> mean_fear_joiner
+
+mean_fear_joiner %>% 
+  filter(FearMean == max(FearMean)) %>% 
+  select(Day) %>% 
+  unlist() -> fear_peak
+
+# ------ data formatting p1 ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "IdCount") %>% 
+  group_by(Day, Concept) %>% 
+  summarize(MeanValue = mean(Value)) %>% 
+  ungroup() %>% 
+  inner_join(mean_fear_joiner, by = "Day") -> tmp1
+
+tmp1$Concept %<>% factor(levels = c("IdCount")) %>% recode("IdCount" = "number of detected infectives")
+
+tmp1 %>% 
+  filter(MeanValue == max(MeanValue)) %>% 
+  select(Day) %>% 
+  unlist() -> epidemic_peak1
+
+# ------ data formatting p2 ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "ICount") %>% 
+  group_by(Day, Concept) %>% 
+  summarize(MeanValue = mean(Value)) %>% 
+  ungroup() %>% 
+  inner_join(mean_fear_joiner, by = "Day") -> tmp2
+
+tmp2$Concept %<>% factor(levels = c("ICount")) %>% recode("ICount" = "number of infectives")
+
+tmp2 %>% 
+  filter(MeanValue == max(MeanValue)) %>% 
+  select(Day) %>% 
+  unlist() -> epidemic_peak2
+
+# plotting ---
+tmp1 %>% 
+  ggplot(aes(x = Day, fill = Concept)) +
+    geom_rect(xmin = epidemic_peak1, xmax = fear_peak, ymin = 0, ymax = 1000, size = 0, alpha = 0.5, fill = "grey") +
+    geom_bar(aes(y = MeanValue), position = position_dodge(0.9), stat = "identity", width = 0.5, alpha = 0.8) +
+    geom_line(aes(y = FearMean / coeff, linetype = "average fear"), size = 1, color = "red", alpha = 0.5) +
+    geom_vline(xintercept = epidemic_peak1, linetype = "dashed", size = 0.7) +
+    geom_vline(xintercept = fear_peak, linetype = "dashed", size = 0.7) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 70.5)) +
+    scale_y_continuous(
+      name = "Cases", breaks = seq(0, 1000, by = 200), limits = c(0, 1000),
+      sec.axis = sec_axis(~ . * coeff, name = "Average fear", breaks = seq(0, 1, by = 0.2))
+    ) +
+    scale_fill_manual(values = c("number of detected infectives" = "royalblue1")) +
+    scale_linetype_manual(NULL, values = 1) +
+    labs(title = "Number of detected infectives and fear", x = "Day", fill = element_blank()) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      axis.title.y.left = element_text(size = 11, margin = margin (r = 10)),
+      axis.title.y.right = element_text(size = 11, margin = margin (l = 10)),
+      axis.title.x = element_text(size = 11, margin = margin(t = 5, b = 5)),
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.margin = margin(t = 0),
+      legend.spacing.x = unit(5, units = "pt"),
+      legend.box.margin = margin(t = 5),
+      plot.margin = margin(t = 20, b = 10)
+    ) +
+    NULL -> p1
+
+tmp2 %>% 
+  ggplot(aes(x = Day, fill = Concept)) +
+    geom_rect(xmin = epidemic_peak2, xmax = fear_peak, ymin = 0, ymax = 1000, size = 0, alpha = 0.5, fill = "grey") +
+    geom_bar(aes(y = MeanValue), position = position_dodge(0.9), stat = "identity", width = 0.5, alpha = 0.8) +
+    geom_line(aes(y = FearMean / coeff, linetype = "average fear"), size = 1, color = "red", alpha = 0.5) +
+    geom_vline(xintercept = epidemic_peak2, linetype = "dashed", size = 0.7) +
+    geom_vline(xintercept = fear_peak, linetype = "dashed", size = 0.7) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 70.5)) +
+    scale_y_continuous(
+      name = "Cases", breaks = seq(0, 1000, by = 200), limits = c(0, 1000),
+      sec.axis = sec_axis(~ . * coeff, name = "Average fear", breaks = seq(0, 1, by = 0.2))
+    ) +
+    scale_fill_manual(values = c("number of infectives" = "gold3")) +
+    scale_linetype_manual(NULL, values = 1) +
+    labs(title = "Number of infectives and fear", x = "Day", fill = element_blank()) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      axis.title.y.left = element_text(size = 11, margin = margin (r = 10)),
+      axis.title.y.right = element_text(size = 11, margin = margin (l = 10)),
+      axis.title.x = element_text(size = 11, margin = margin(t = 5, b = 5)),
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.margin = margin(t = 0),
+      legend.spacing.x = unit(5, units = "pt"),
+      legend.box.margin = margin(t = 5),
+      plot.margin = margin(t = 20, b = 10)
+    ) +
+    NULL -> p2
+
+ggarrange(p1, p2, labels = c("A", "B"), ncol = 1, nrow = 2, hjust = -0.3, vjust = 1) %>% 
+  annotate_figure(bottom = text_grob("Dashed lines indicate the respective peaks.", hjust = -0.1, vjust = 0.5, size = 10)) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(
+  coeff, config_nr, epidemic_peak1, epidemic_peak2, fear_peak, filename, 
+  height, mean_fear_joiner, p1, p2, tmp1, tmp2, width
+)
+```
+
+* *Caption:* The dashed lines indicate the peaks of the number of new cases per day (left) and fear (right) respectively. Fear peaks two days after the number of new cases. Fear and detected cases align perfectly due to the model assumptions.  
+* *Writing Points:* demonstration of the lag between the actual epidemic and the agents' fear, agents have incomplete information (know only number of detected cases)   
+
+
+
+
+
+
+## Contagion Dynamics in the Recommendation Condition
+
+```{r recommendation-new-cases-1-plot-1}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_new_cases_1")
+width <- 8
+height <- 8
+config_nr <- "config_02"
+agentcount <- config %>% select(AgentCount) %>% unique() %>% unlist()
+color_scheme <- viridis(2)
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp1 
+
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  mutate(BehaviorFraction = BehaviorCount / agentcount) -> tmp2 
+
+summary_agent_states %>% filter(Config == config_nr) -> tmp3
+
+summary_agent_states %>% filter(Config == config_nr) -> tmp4
+
+# plotting ---
+tmp1 %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", alpha = 0.7, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 100)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20), limits = c(0, 100)) +
+    labs(x = "Day", y = "New cases") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p1
+
+tmp2 %>% 
+  ggplot(aes(x = Day, y = BehaviorFraction)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+    labs(x = "Day", y = "Behavior") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p2
+
+tmp3 %>% 
+  ggplot(aes(x = Day, y = SocialNormMean)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, linetype = "dashed", color = "red", size = 0.7) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    labs(x = "Day", y = "Social norm") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p3
+
+tmp4 %>% 
+  ggplot(aes(x = Day, y = FearMean)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, linetype = "dashed", color = "red", size = 0.7) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    labs(x = "Day", y = "Fear") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p4
+
+# arranging plots ---
+ggarrange(
+  p1, p2, p3, p4, 
+  labels = c("A", "B", "C", "D"),
+  ncol = 1, hjust = -0.3, vjust = 0.5
+) %>%
+  annotate_figure(
+    bottom = text_grob(
+      "The red dashed line indicates the start of the recommendation.\nLines and ribbons in plots B - D indicate mean and range.",
+      hjust = 1, x = 1, size = 10
+    )
+  ) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(agentcount, color_scheme, config_nr, filename, height, p1, p2, p3, p4, tmp1, tmp2, tmp3, tmp4, width)
+```
+
+
+---
+
+```{r recommendation-new-cases-1-plot-2, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_new_cases_2")
+width <- 6
+height <- 4
+config_nr <- "config_02"
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", alpha = 0.3, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 100)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20)) +
+    labs(
+      title = "New cases per day", x = "Day", y = "New cases",
+      caption = "The red dashed line indicates the start of the recommendation."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* The contagion dynamics under the recommendation condition. The plot shows the aggregation of five replicates. Two waves of new cases are clearly discernable.  
+* *Description:* aggregated view of contagion dynamics in the recommendation configuration, two waves are discernable, first wave is larger (with global peak), second wave smaller, trailing at the end  
+
+```{r recommendation-new-cases-2-plot-3, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_new_cases_3")
+width <- 6
+height <- 4
+config_nr <- "config_02"
+
+# data formatting ---
+summary_agent_states %>% 
+  select(Config, Replicate, Day, BehaviorCount) %>%
+  filter(Config == config_nr) %>% 
+  group_by(Day) %>% 
+  summarize(BehaviorCount = mean(BehaviorCount)) %>% 
+  ungroup() -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = BehaviorCount), stat = "identity", fill = "black", alpha = 0.3, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 100)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 100)) +
+    labs(
+      title = "Number of agents applying the behavior", x = "Day", y = "Number of agents",
+      caption = "The red dashed line indicates the start of the recommendation."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* Behavior counts under the recommendation condition. After the recommendation is issued, the amount of agents applying the behavior gradually increases up to a point where almost the entire population participates.   
+* *Writing Points:* behavior counts after recommendation comes into effect, first steep increase which slows a little after about 10 days    
+
+```{r recommendation-new-cases-3-plot-4, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_new_cases_4")
+width <- 8
+height <- 4
+config_nr <- "config_02"
+color_scheme <- viridis(2)
+
+# data formatting ---
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  inner_join(config %>% select(Config, AgentCount), by = "Config") %>% 
+  select(Replicate, Day, SocialNormMean, BehaviorCount, AgentCount) %>%
+  mutate(BehaviorFraction = BehaviorCount / AgentCount) %>% 
+  select(-BehaviorCount, -AgentCount) %>% 
+  group_by(Day) %>% 
+  summarize(
+    MeanSocialNormMean = mean(SocialNormMean),
+    MeanBehaviorFraction = mean(BehaviorFraction)
+  ) %>% 
+  ungroup() -> tmp
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = MeanBehaviorFraction, fill = "average behavior fraction"), stat = "identity", width = 0.5) +
+    geom_line(aes(y = MeanSocialNormMean, linetype = "average social norm"), color = color_scheme[2], size = 1) +
+    geom_vline(xintercept = 10, linetype = "dashed", color = "red", size = 0.7) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(
+      name = "Fraction of agents applying behavior", breaks = seq(0, 1, by = 0.2), limits = c(0, 1),
+      sec.axis = sec_axis(~ . * 1, name = "Average social norm", breaks = seq(0, 1, by = 0.2))
+    ) +
+    scale_linetype_manual(NULL, values = 1) +
+    scale_fill_manual(NULL, values = color_scheme[1]) +
+    labs(
+      title = "Behavior and social norm", x = "Day", 
+      caption = "The red dashed line indicates the start of the recommendation."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      axis.title.y.left = element_text(size = 11, margin = margin (r = 10)),
+      axis.title.y.right = element_text(size = 11, margin = margin (l = 10)),
+      legend.spacing.y = unit(0, units = "pt")
+    ) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(color_scheme, config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* Behavior and social norm develop in parallel. As more agents start to apply the behavior, they influence the social norm perceptions of other agents and the process perpetuates itself.
+* *Writing Points:* compounding effect, avalanche of behavior, social influence, reference to the game  
+
+```{r recommendation-new-cases-4-plot-5, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_new_cases_5")
+width <- 6
+height <- 3.5
+config_nr <- "config_02"
+agentcount <- dim(agent_attributes %>% select(Id) %>% unique())[1]
+coeff <- 0.01
+color_scheme <- viridis(2)
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day, Concept) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup()%>% 
+  group_by(Day, Concept) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  select(Replicate, Day, BehaviorCount) %>% 
+  group_by(Replicate, Day) %>% 
+  summarize(BehaviorFractionMean = mean(BehaviorCount) / agentcount) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(BehaviorFractionMean = mean(BehaviorFractionMean)) %>% 
+  ungroup() -> behavior_fraction_joiner
+
+tmp %<>% inner_join(behavior_fraction_joiner, by = "Day") 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", width = 0.5, alpha = 0.3) +
+    geom_line(
+      aes(y = BehaviorFractionMean / coeff, linetype = "average behavior fraction"),
+      size = 1, color = color_scheme[1]
+    ) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 71)) +
+    scale_y_continuous(
+      name = "New cases", breaks = seq(0, 100, by = 20), limits = c(0, 100),
+      sec.axis = sec_axis(~ . * coeff, name = "Behavior fraction", breaks = seq(0, 1, by = 0.2))
+    ) +
+    scale_linetype_manual(NULL, values = 1) +
+    labs(
+      title = "New actual cases per day", x = "Day", 
+      caption = "The red dashed line indicates the start of the recommendation."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      axis.title.y.left = element_text(size = 11, margin = margin (r = 10)),
+      axis.title.y.right = element_text(size = 11, margin = margin (l = 10)),
+      legend.position = "bottom"
+    ) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(agentcount, behavior_fraction_joiner, coeff, color_scheme, config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* After the recommendation is issued, behavior goes up rapidly and then stabilizes until it goes down again when there are almost no more new cases. Both measures are aggregations over all replicates of the recommendation condition.  
+* *Writing Points:* contagion and behavior dynamics in relation to one another in the recommendation scenario, explanation for second wave   
+
+
+
+
+
+
+## Contagion Dynamics in the Policy Condition
+
+```{r policy-new-cases-1-plot-1}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "policy_new_cases_1")
+width <- 8
+height <- 8
+config_nr <- "config_03"
+agentcount <- config %>% select(AgentCount) %>% unique() %>% unlist()
+color_scheme <- viridis(2)
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp1 
+
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  mutate(BehaviorFraction = BehaviorCount / agentcount) -> tmp2 
+
+summary_agent_states %>% filter(Config == config_nr) -> tmp3
+
+summary_agent_states %>% filter(Config == config_nr) -> tmp4
+
+# plotting ---
+tmp1 %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", alpha = 0.7, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 100)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20), limits = c(0, 100)) +
+    labs(x = "Day", y = "New cases") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p1
+
+tmp2 %>% 
+  ggplot(aes(x = Day, y = BehaviorFraction)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+    labs(x = "Day", y = "Behavior") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p2
+
+tmp3 %>% 
+  ggplot(aes(x = Day, y = SocialNormMean)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, linetype = "dashed", color = "royalblue1", size = 0.7) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    labs(x = "Day", y = "Social norm") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p3
+
+tmp4 %>% 
+  ggplot(aes(x = Day, y = FearMean)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, linetype = "dashed", color = "royalblue1", size = 0.7) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    labs(x = "Day", y = "Fear") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p4
+
+# arranging plots ---
+ggarrange(
+  p1, p2, p3, p4, 
+  labels = c("A", "B", "C", "D"),
+  ncol = 1, hjust = -0.3, vjust = 0.5
+) %>%
+  annotate_figure(
+    bottom = text_grob(
+      "The blue dashed line indicates the start of the policy.\nLines and ribbons in plots B - D indicate mean and range.",
+      hjust = 1, x = 1, size = 10
+    )
+  ) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(agentcount, color_scheme, config_nr, filename, height, p1, p2, p3, p4, tmp1, tmp2, tmp3, tmp4, width)
+```
+
+```{r policy-new-cases-1-plot-2, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "policy_new_cases_2")
+width <- 6
+height <- 4
+config_nr <- "config_03"
+
+# data formatting ---
+mdata_long %>%  
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>%
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", alpha = 0.3, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 100)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20), limits = c(0, 100)) +
+    labs(
+      title = "New cases per day", x = "Day", y = "Number of new cases",
+      caption = "The blue dashed line indicates the start of the policy."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* Contagion dynamics under the policy condition. New cases drop immediately when the policy comes into effect. A second wave ensues and peaks at about the same height as the first wave. Aggregated view of five replicates under the policy condition.    
+* *Writing Points:* aggregated view of contagion dynamics in the policy configuration, two waves are discernable, immediate drop, trailing cases at the end
+
+```{r policy-new-cases-2-plot-3}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "policy_new_cases_3")
+width <- 6
+height <- 4
+config_nr <- "config_03"
+exp_fun <- function (x) {x ^ 2 / 1920}
+color_scheme <- viridis(2)
+
+# data formatting ---
+mdata_long %>%  
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>%
+  group_by(Step) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Step)) +
+    stat_function(fun = exp_fun, linetype = "dashed", color = "gold2", size = 0.7) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", alpha = 0.3, width = 0.5) +
+    geom_vline(xintercept = 100, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 1000, by = 10), limits = c(0, 160)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 1)) +
+    labs(
+      title = "New cases per step", x = "Step", y = "New cases",
+      caption = "The blue dashed line indicates the start of the policy. \nThe yellow dashed line approximates the exponential growth of new cases."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(color_scheme, config_nr, exp_fun, filename, height, tmp, width)
+```
+
+* *Caption:* Zoom into the contagion dynamics under the policy condition. New cases drop immediately when the policy comes into effect. Aggregated view over five replicates.
+* *Writing Points:* aggregated view of contagion dynamics in the policy configuration, zoom into the plot above, step level not day level (hence smaller case counts), immediate drop  
+
+
+```{r policy-new-cases-3-plot-4, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "policy_new_cases_4")
+width <- 6
+height <- 4
+config_nr <- "config_03"
+
+# data formatting ---
+mdata_long %>% 
+  inner_join(
+    summary_agent_states %>% select(Config, Replicate, Day, BehaviorCount),
+    by = c("Config", "Replicate", "Day")
+  ) %>%
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(BehaviorCount = mean(BehaviorCount)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(BehaviorCount = mean(BehaviorCount)) -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = BehaviorCount), stat = "identity", fill = "black", alpha = 0.3, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 101)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 100), limits = c(0, 1000)) +
+    labs(
+      title = "Number of agents who apply the behavior", x = "Day", y = "Number of agents applying behavior",
+      caption = "The blue dashed line indicates the start of the policy."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* There is a sudden uptick in behavior right when the policy starts. After that, behavior stays relatively stable. The plot shows an aggregation over five replicates under the policy condition.  
+* *Writing Points:* behavior counts after policy comes into effect   
+
+
+```{r policy-new-cases-4-plot-5, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "policy_new_cases_5")
+width <- 6
+height <- 4
+config_nr <- "config_03"
+agentcount <- dim(agent_attributes %>% select(Id) %>% unique())[1]
+coeff <- 0.01
+color_scheme <- viridis(1)
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day, Concept) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup()%>% 
+  group_by(Day, Concept) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  select(Replicate, Day, BehaviorCount) %>% 
+  group_by(Replicate, Day) %>% 
+  summarize(BehaviorFractionMean = mean(BehaviorCount) / agentcount) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(BehaviorFractionMean = mean(BehaviorFractionMean)) %>% 
+  ungroup() -> behavior_fraction_joiner
+
+tmp %<>% inner_join(behavior_fraction_joiner, by = "Day") 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", width = 0.5, alpha = 0.3) +
+    geom_line(
+      aes(y = BehaviorFractionMean / coeff, linetype = "average behavior fraction"),
+      size = 1, color = color_scheme[1]
+    ) +
+    geom_vline(xintercept = 10, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 71)) +
+    scale_y_continuous(
+      name = "New cases", breaks = seq(0, 100, by = 20), limits = c(0, 100),
+      sec.axis = sec_axis(~ . * coeff, name = "Behavior fraction", breaks = seq(0, 1, by = 0.2))
+    ) +
+    scale_linetype_manual(NULL, values = 1) +
+    labs(
+      title = "New actual cases per day", x = "Day", fill = element_blank(),
+      caption = "The blue dashed line indicates the start of the policy."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      axis.title.y.left = element_text(size = 11, margin = margin (r = 10)),
+      axis.title.y.right = element_text(size = 11, margin = margin (l = 10)),
+      legend.position = "bottom"
+    ) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(agentcount, behavior_fraction_joiner, coeff, color_scheme, config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* Behavior and new cases in relation to each other. The plot shows an aggregation over five replicates under the policy condition.  
+* *Writing Points:* contagion and behavior dynamics in relation to one another in the policy scenario   
+
+
+
+
+
+
+## Contagion Dynamics with Recommendation and Policy
+
+```{r recommendation-policy-new-cases-1-plot-1}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_policy_new_cases_1")
+width <- 8
+height <- 8
+config_nr <- "config_04"
+agentcount <- config %>% select(AgentCount) %>% unique() %>% unlist()
+color_scheme <- viridis(2)
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp1 
+
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  mutate(BehaviorFraction = BehaviorCount / agentcount) -> tmp2 
+
+summary_agent_states %>% filter(Config == config_nr) -> tmp3
+
+summary_agent_states %>% filter(Config == config_nr) -> tmp4
+
+# plotting ---
+tmp1 %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", alpha = 0.7, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = 20, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 100)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20), limits = c(0, 100)) +
+    labs(x = "Day", y = "New cases") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p1
+
+tmp2 %>% 
+  ggplot(aes(x = Day, y = BehaviorFraction)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = 20, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+    labs(x = "Day", y = "Behavior") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p2
+
+tmp3 %>% 
+  ggplot(aes(x = Day, y = SocialNormMean)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = 20, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    labs(x = "Day", y = "Social norm") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p3
+
+tmp4 %>% 
+  ggplot(aes(x = Day, y = FearMean)) +
+    stat_summary(fun = mean, geom = "line", size = 1) +
+    stat_summary(fun.min = min, fun.max = max, geom = "ribbon", alpha = 0.3) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = 20, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    labs(x = "Day", y = "Fear") +
+    theme_thesis(plot_margin = 5, design = THEME_DESIGN) +
+    NULL -> p4
+
+# arranging plots ---
+ggarrange(
+  p1, p2, p3, p4, 
+  labels = c("A", "B", "C", "D"),
+  ncol = 1, hjust = -0.3, vjust = 0.5
+) %>%
+  annotate_figure(
+    bottom = text_grob(
+      "The red and blue dashed lines indicate the start of the recommendation and policy respectively.\nLines and ribbons in plots B - D indicate mean and range.",
+      hjust = 1, x = 1, size = 10
+    )
+  ) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(agentcount, color_scheme, config_nr, filename, height, p1, p2, p3, p4, tmp1, tmp2, tmp3, tmp4, width)
+```
+
+```{r recommendation-policy-new-cases-1-plot-2, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_policy_new_cases_2")
+width <- 6
+height <- 4
+config_nr <- "config_04"
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", fill = "black", alpha = 0.3, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = 20, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 71)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 10), limits = c(0, 100)) +
+    labs(
+      title = "New cases per day", x = "Day", y = "New cases",
+      caption = "The dashed lines indicate the start of the recommendation (red) and the policy (blue)."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* With both recommendation and policy in effect, the earlier measure seems to overpower the latter (recommendation on day 10, policy on day 20). The dynamic looks very similar to the recommendation condition. The plot shows an aggregation over five replicates.
+* *Writing Points:* aggregated view of contagion dynamics in the recommendation and policy configuration, two waves are discernable, both recommendation and policy are in effect  
+
+```{r recommendation-policy-new-cases-2-plot-3, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_policy_new_cases_3")
+width <- 6
+height <- 4
+config_nr <- "config_04"
+
+# data formatting ---
+mdata_long %>% 
+  inner_join(
+    summary_agent_states %>% select(Config, Replicate, Day, BehaviorCount),
+    by = c("Config", "Replicate", "Day")
+  ) %>%
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day) %>%
+  summarize(BehaviorCount = mean(BehaviorCount)) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(BehaviorCount = mean(BehaviorCount)) -> tmp 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = BehaviorCount), stat = "identity", fill = "black", alpha = 0.3, width = 0.5) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = 20, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 101)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 100)) +
+    labs(
+      title = "Number of agents who apply the behavior", x = "Day", y = "Number of agents applying behavior",
+      caption = "The dashed lines indicate the start of the recommendation (red) and the policy (blue)."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* Behavior dynamics with recommendation and policy. Behavior gradually increases after the recommendation is issued. Policy does not seem to have a large effect when it comes into effect. 
+* *Writing Points:* behavior counts after recommendation and policy come into effect, policy seems to be overpowered, similar dynamics as in the recommendation scenario   
+
+```{r recommendation-behavior-new-cases-3-plot-4, eval=FALSE}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "recommendation_behavior_new_cases_4")
+width <- 6
+height <- 4
+config_nr <- "config_04"
+agentcount <- dim(agent_attributes %>% select(Id) %>% unique())[1]
+coeff <- 0.01
+color_scheme <- viridis(1)
+
+# data formatting ---
+mdata_long %>% 
+  filter(Config == config_nr) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(Replicate, Day, Concept) %>%
+  summarize(Value = sum(Value)) %>%
+  ungroup()%>% 
+  group_by(Day, Concept) %>% 
+  summarize(Value = mean(Value)) %>% 
+  ungroup() -> tmp 
+
+summary_agent_states %>% 
+  filter(Config == config_nr) %>% 
+  select(Replicate, Day, BehaviorCount) %>% 
+  group_by(Replicate, Day) %>% 
+  summarize(BehaviorFractionMean = mean(BehaviorCount) / agentcount) %>%
+  ungroup() %>% 
+  group_by(Day) %>% 
+  summarize(BehaviorFractionMean = mean(BehaviorFractionMean)) %>% 
+  ungroup() -> behavior_fraction_joiner
+
+tmp %<>% inner_join(behavior_fraction_joiner, by = "Day") 
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Value), stat = "identity", width = 0.5, alpha = 0.3) +
+    geom_line(
+      aes(y = BehaviorFractionMean / coeff, linetype = "average behavior fraction"),
+      size = 1, color = color_scheme[1]
+    ) +
+    geom_vline(xintercept = 10, size = 0.7, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = 20, size = 0.7, color = "royalblue1", linetype = "dashed") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 71)) +
+    scale_y_continuous(
+      name = "New cases", breaks = seq(0, 100, by = 20), limits = c(0, 100),
+      sec.axis = sec_axis(~ . * coeff, name = "Behavior fraction", breaks = seq(0, 1, by = 0.2))
+    ) +
+    scale_linetype_manual(NULL, values = 1) +
+    labs(
+      title = "New actual cases per day", x = "Day", fill = element_blank(),
+      caption = "The dashed lines indicates the start of the recommendation (red) and the policy (blue)."
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      axis.title.y.left = element_text(size = 11, margin = margin (r = 10)),
+      axis.title.y.right = element_text(size = 11, margin = margin (l = 10)),
+      legend.position = "bottom",
+    ) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(agentcount, behavior_fraction_joiner, coeff, color_scheme, config_nr, filename, height, tmp, width)
+```
+
+* *Caption:* Behavior and new cases under the recommendation and policy condition. The dynamics resemble the recommendation scenario.  
+* *Writing Points:* contagion and behavior dynamics in relation to one another in the recommendation and policy scenario, similarity to recommendation scenario, overpowering of second measure   
+
+
+

@@ -1,0 +1,734 @@
+---
+title: "Effect of Test Probability"
+author: "Johannes Nakayama"
+date: "14 9 2020"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+
+
+
+
+
+## Setup
+
+For this analysis, the following packages were used: `tidyverse`, `magrittr`, `ggpubr`, `igraph`, `viridis`. Some additional functions to support the work flow and reduce code complexity were written. They are located in the script `helpers.R`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+# load libraries ---
+library(tidyverse)
+library(magrittr)
+library(ggpubr)
+library(igraph)
+library(viridis)
+
+# process / load data ---
+if (!("data.RData" %in% list.files())) {source("data_processing.R")}
+load("data.RData")
+
+# load helper functions ---
+source(file.path("..", "helpers.R"))
+
+# plot specifications ---
+SAVE <- TRUE
+EXPERIMENT_PREFIX <- "main_testprob"
+RESOLUTION_DPI <- 300
+THEME_DESIGN <- 2
+plot_no <- 0
+
+# create directories ---
+dir.create("graphics", showWarnings = FALSE)
+dir.create(file.path("graphics", "pdf"), showWarnings = FALSE)
+dir.create(file.path("graphics", "png"), showWarnings = FALSE)
+```
+
+
+
+
+
+
+## Datasets
+
+The following code reads all the required datasets and formats them according to the requirements of the visualizations. This should result in the following datasets:
+
+  * `config`: all the configurations of the simulations [dataframe]
+  * `summary_statistics`: summary statistics on all simulation runs [dataframe]
+  * `summary_statistics_aggregated`: summary statistics on all simulation runs aggregated by replicate [dataframe]
+  * `mdata`: model data of all simulation runs [dataframe]
+  * `mdata_long`: model data of all simulation runs in long format [dataframe]
+  * `mdata_summarized`: model data of all simulation runs summarized by replicate [dataframe]
+  * `mdata_summarized_long`: model data of all simulation runs summarized by replicate in long format [dataframe]
+  * `summary_agent_states`: summary of the agent states over simulation time [dataframe]
+
+```{r inspect-datasets, eval=FALSE}
+config
+mdata
+mdata_long
+mdata_summarized
+mdata_summarized_long
+summary_statistics
+summary_statistics_aggregated
+summary_agent_states
+```
+
+
+
+
+
+
+## General Remarks
+
+There are two concepts of time in the following analysis: steps and days. In the model implementation, ten steps form one day. In the analysis, the data have been aggregated where appropriate.
+
+In many of the code blocks, the datasets are slightly modified to be suitable for visualization. These temporary datasets are named `tmp`. 
+
+There are two ways in which the dynamics of the epidemics are displayed: either as new cases per day or as count of agents that are infectious that day (or step respectively).  
+
+All but one factor, all configuration setups have been held constant for the experiments in this analysis. The default values are:
+  
+  * `Nodes`: 300
+  * `N0`: `3
+  * `K`: 3
+  * `AgentCount`: 1000
+  * `TransmissionProb`: 0.05
+  * `QuarantineDuration`: 140
+  * `BehaviorReductionFactor`: 0.25
+  * `TickAuthorityRecommendation` 100
+  * `TickAuthorityPolicy`: 200
+  * `PublicSpaces`: 100
+  * `InitialInfectives`: 5
+  * `Iterations`: 1000
+
+The two factors `TestProb` and `BehaviorActivated` have been manipulated. `TestProb` has been sampled from the range [0, 1] in steps of 0.1 and each of the agent count configurations has been run once with `BehaviorActivated` set to `TRUE` and `FALSE` respectively. This results in a total of 11 x 2 configurations. 10 replicates have been run for each configuration.
+
+
+
+
+
+
+## Key Statistics
+
+There are four key statistics that I computed for all configurations of the experiment: 
+  
+  * *peak infective fraction:* peak fraction agents that are infective at the same time
+  * *tick of peak infective count:* point in (simulation) time where the peak infective count is reached
+  * *duration of the epidemic:* time between the start of the simulation and the recovery of the last infective agent (in ticks)
+  * *fraction of agents still susceptible after the simulation:* the fraction of agents that have never been infected during the entire simulation
+
+The aim of the analysis is to see if there are trends and differences between the configurations. 
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_peak")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on epidemic peak",
+  x = "Test probability", 
+  y = "Peak fraction of infective agents",
+  caption = "Dots indicate the mean, error bars the standard error."
+)
+
+# data formatting ---
+tmp <- summary_statistics_aggregated
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+  
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = PeakInfectiveFractionMean, color = BehaviorActivated)) +
+    geom_line() +
+    geom_point(size = 2) +
+    geom_errorbar(
+      aes(
+        ymin = PeakInfectiveFractionMean - PeakInfectiveFractionSE, 
+        ymax = PeakInfectiveFractionMean + PeakInfectiveFractionSE
+      ),
+      width = 0.03
+    ) +
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.05)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, tmp, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "step_of_peak")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on step of epidemic peak",
+  x = "Test probability", 
+  y = "Step of epidemic peak",
+  caption = "Dots indicate the mean, error bars the standard error." 
+)
+
+# data formatting ---
+tmp <- summary_statistics_aggregated
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = TickOfPeakInfectiveCountMean, color = BehaviorActivated)) +
+    geom_line() +
+    geom_point(size = 2) +
+    geom_errorbar(
+      aes(
+        ymin = TickOfPeakInfectiveCountMean - TickOfPeakInfectiveCountSE, 
+        ymax = TickOfPeakInfectiveCountMean + TickOfPeakInfectiveCountSE
+      ),
+      width = 0.03
+    ) +
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 10), limits = c(130, 270)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, tmp, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_duration")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on duration of epidemic",
+  x = "Test probability", 
+  y = "Duration of epidemic",
+  caption = "Dots indicate the mean, error bars the standard error."
+)
+
+# data formatting ---
+tmp <- summary_statistics_aggregated
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = DurationOfEpidemicMean, color = BehaviorActivated)) +
+    geom_line() +
+    geom_point(size = 2) +
+    geom_errorbar(
+      aes(
+        ymin = DurationOfEpidemicMean - DurationOfEpidemicSE, 
+        ymax = DurationOfEpidemicMean + DurationOfEpidemicSE
+      ),
+      width = 0.03
+    ) +  
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+rm(filename, height, labs, tmp, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "fraction_susceptibles")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on fraction of remaining susceptibles",
+  x = "Test probability", 
+  y = "Fraction of susceptibles",
+  caption = "Dots indicate the mean, error bars the standard error."
+)
+
+# data formatting ---
+tmp <- summary_statistics_aggregated
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = FractionStillSusceptibleMean, color = BehaviorActivated)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(
+      ymin = FractionStillSusceptibleMean - FractionStillSusceptibleSE, 
+      ymax = FractionStillSusceptibleMean + FractionStillSusceptibleSE
+    ),
+    width = 0.03
+  ) +
+  scale_color_manual(values = color_scheme) +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.005)) +
+  labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+  theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+  NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, plot_prefix, tmp, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "main_effects")
+width <- 8
+height <- 6
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+
+# data formatting ---
+tmp <- summary_statistics_aggregated
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+  
+# plotting p1 ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = PeakInfectiveFractionMean, color = BehaviorActivated)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = PeakInfectiveFractionMean - PeakInfectiveFractionSE, 
+        ymax = PeakInfectiveFractionMean + PeakInfectiveFractionSE
+      ),
+      width = 0
+    ) +
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.1)) +
+    labs(
+      title = "Effect on epidemic peak",
+      x = "Test probability", 
+      y = "Peak fraction of infective agents"
+    ) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r= 5)),
+      axis.text = element_text(size = 8)
+    ) +
+    NULL -> p1
+
+# plotting p2 ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = TickOfPeakInfectiveCountMean, color = BehaviorActivated)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = TickOfPeakInfectiveCountMean - TickOfPeakInfectiveCountSE, 
+        ymax = TickOfPeakInfectiveCountMean + TickOfPeakInfectiveCountSE
+      ),
+      width = 0
+    ) +
+    scale_color_manual(values =color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 20)) +
+    labs(
+      title = "Effect on step of epidemic peak",
+      x = "Test probability", 
+      y = "Step of epidemic peak"
+    ) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r= 5)),
+      axis.text = element_text(size = 8)
+    ) +
+    NULL -> p2
+
+# plotting p3 ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = DurationOfEpidemicMean, color = BehaviorActivated)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = DurationOfEpidemicMean - DurationOfEpidemicSE, 
+        ymax = DurationOfEpidemicMean + DurationOfEpidemicSE
+      ),
+      width = 0 
+    ) +  
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 100)) +
+    labs(
+      title = "Effect on duration of epidemic",
+      x = "Test probability", 
+      y = "Duration of epidemic"
+    ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r= 5)),
+      axis.text = element_text(size = 8)
+    ) +
+    NULL -> p3
+
+# plotting p4 ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = FractionStillSusceptibleMean, color = BehaviorActivated)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = FractionStillSusceptibleMean - FractionStillSusceptibleSE, 
+        ymax = FractionStillSusceptibleMean + FractionStillSusceptibleSE
+      ),
+      width = 0
+    ) +
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.01)) +
+    labs(
+      title = "Effect on fraction of remaining susceptibles",
+      x = "Test probability", 
+      y = "Fraction of susceptibles"
+    ) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r= 5)),
+      axis.text = element_text(size = 8)
+    ) +
+    NULL -> p4
+
+# arranging plots ---
+ggarrange(p1, p2, p3, p4, labels = c("A", "B", "C", "D"), common.legend = TRUE, legend = "bottom", hjust = -0.3, vjust = 0.5) %>% 
+  annotate_figure(
+    bottom = text_grob(
+      "The effects of test probability.\nDots indicate the mean, error bars the standard error.", 
+      size = 8, hjust = 1, x = 1
+    )
+  ) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)
+
+# reset ---
+rm(color_scheme, filename, height, p1, p2, p3, p4, tmp, width)
+```
+
+
+
+
+
+
+## Key Statistics (Detailed)
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_peak_detailed")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on epidemic peak",
+  x = "Test probability", 
+  y = "Peak fraction of infective agents"
+)
+
+# data formatting ---
+tmp <- summary_statistics
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+  
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = PeakInfectiveFraction, color = BehaviorActivated)) +
+    geom_point(size = 2, alpha = 0.2) +
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.05)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, tmp, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "step_of_peak_detailed")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on step of epidemic peak",
+  x = "Test probability", 
+  y = "Step of epidemic peak"
+)
+
+# data formatting ---
+tmp <- summary_statistics
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = TickOfPeakInfectiveCount, color = BehaviorActivated)) +
+    geom_point(size = 2, alpha = 0.2) +
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 10)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, tmp, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_duration_detailed")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on duration of epidemic",
+  x = "Test probability", 
+  y = "Duration of epidemic"
+)
+
+# data formatting ---
+tmp <- summary_statistics
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = DurationOfEpidemic, color = BehaviorActivated)) +
+    geom_point(size = 2, alpha = 0.2) + 
+    scale_color_manual(values = color_scheme) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+rm(filename, height, labs, tmp, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "fraction_susceptibles_detailed")
+width <- 8
+height <- 5
+color_scheme <- c("behavior not activated" = "black", "behavior activated" = "gold3")
+labs <- c(
+  title = "Effect of test probability on fraction of remaining susceptibles",
+  x = "Test probability", 
+  y = "Fraction of susceptibles"
+)
+
+
+# data formatting ---
+tmp <- summary_statistics
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = TestProb, y = FractionStillSusceptible, color = BehaviorActivated)) +
+  geom_point(size = 2, alpha = 0.2) +
+  scale_color_manual(values = color_scheme) +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.01)) +
+  labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+  theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+  NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, plot_prefix, tmp, width)
+```
+
+
+
+
+
+
+## Epidemic Curves by Agent Count
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "i_curves")
+width <- 9
+height <- 8
+
+# data formatting ---
+mdata_summarized_long %>% 
+  filter(Concept == "ICountLower" | Concept == "ICountUpper") %>% 
+  right_join(config %>% select(Config, TestProb, BehaviorActivated), by = "Config") %>% 
+  group_by(TestProb, BehaviorActivated, Step) %>% 
+  summarize(MeanFraction = mean(Fraction)) %>% 
+  ungroup() -> tmp1
+
+tmp1$TestProb %<>% factor(levels = seq(0, 1, by = 0.1))
+tmp1$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+mdata_summarized_long %>% 
+  filter(Concept == "ICumulativeLower" | Concept == "ICumulativeUpper") %>% 
+  right_join(config %>% select(Config, TestProb, BehaviorActivated), by = "Config") %>% 
+  group_by(TestProb, BehaviorActivated, Step) %>% 
+  summarize(MeanFraction = mean(Fraction)) %>% 
+  ungroup() -> tmp2
+
+tmp2$TestProb %<>% factor(levels = seq(0, 1, by = 0.1))
+tmp2$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+
+# plotting ---
+tmp1 %>% 
+  ggplot(aes(x = Step, y = MeanFraction, color = TestProb)) +
+    geom_line(size = 2, alpha = 0.6) +
+    facet_wrap(. ~ BehaviorActivated, ncol = 2) +
+    scale_x_continuous(breaks = seq(0, 1000, by = 200), limits = c(0, 1000)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    scale_color_viridis_d(option = "magma") +
+    labs(
+      title = "Infective curves", 
+      x = "Step", 
+      y = "Fraction of agents"
+    ) +
+    guides(color = guide_legend(title = "Test probability", reverse = FALSE)) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(legend.title = element_text()) +
+    NULL -> p1
+
+tmp2 %>% 
+  ggplot(aes(x = Step, y = MeanFraction, color = TestProb)) +
+    geom_line(size = 2, alpha = 0.6) +
+    facet_wrap(. ~ BehaviorActivated, ncol = 2) +
+    scale_x_continuous(breaks = seq(0, 1000, by = 200), limits = c(0, 1000)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    scale_color_viridis_d(option = "magma") +
+    labs(
+      title = "Infective curves (cumulated)", 
+      x = "Step", 
+      y = "Fraction of agents"
+    ) +
+    guides(color = guide_legend(title = "Test probability", reverse = FALSE)) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(legend.title = element_text()) +
+    NULL -> p2
+
+# arrange plots ---
+ggarrange(p1, p2, labels = c("A", "B"), ncol = 1, common.legend = TRUE, legend = "right") %>% 
+  annotate_figure(bottom = text_grob("Aggregations over all replicates", size = 8, hjust = 1, x = 1)) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, p1, p2, tmp1, tmp2, width)
+```
+
+
+
+
+
+
+# Contagion Dynamics and Behavior
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "contagion")
+width <- 8
+height <- 8
+labs <- c(
+  title = "New cases per day", 
+  x = "Day", 
+  y = "Fraction of agents",
+  caption = "New cases per day split by test probability (aggregated over all replicates).\nThe dashed lines indicate the start of the recommendation (red) and the policy (blue)."
+)
+
+# data formatting ---
+mdata_long %>% 
+  inner_join(config %>% select(Config, TestProb, BehaviorActivated), by = "Config") %>% 
+  select(-Config, -Step) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  filter((TestProb * 10) %% 2 == 0) %>%
+  group_by(TestProb, BehaviorActivated, Replicate, Day, Concept) %>%
+  summarize(Fraction = sum(Fraction)) %>%
+  ungroup() %>% 
+  group_by(TestProb, BehaviorActivated, Day) %>% 
+  summarize(Fraction = mean(Fraction)) %>% 
+  ungroup() -> tmp 
+
+tmp$BehaviorActivated %<>% factor(levels = c("FALSE", "TRUE")) %>% recode(!!!BEHAVIORACTIVATED_LEVELS)
+tmp$TestProb %<>% factor(levels = seq(0, 1, by = 0.2)) %>% recode(!!!TESTPROB_LEVELS)
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Fraction, fill = BehaviorActivated), stat = "identity", alpha = 0.7, width = 0.5) +
+    geom_vline(xintercept = 10, color = "red", size = 0.7, linetype = "dashed") +
+    geom_vline(xintercept = 20, color = "royalblue1", size = 0.7, linetype = "dashed") +
+    facet_grid(cols = vars(BehaviorActivated), rows = vars(TestProb)) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0, 70.5)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.05), limits = c(0, 0.2)) +
+    scale_fill_manual(values = c("behavior not activated" = "black", "behavior activated" = "gold3")) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    guides(fill = FALSE) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, tmp, width)
+```

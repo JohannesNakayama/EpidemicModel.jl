@@ -1,0 +1,675 @@
+---
+title: "Effect of the Tick of the Policy"
+author: "Johannes Nakayama"
+date: "14 9 2020"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+
+
+
+
+
+## Setup
+
+For this analysis, the following packages were used: `tidyverse`, `magrittr`, `ggpubr`, `igraph`, `viridis`. Some additional functions to support the work flow and reduce code complexity were written. They are located in the script `helpers.R`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+# load libraries ---
+library(tidyverse)
+library(magrittr)
+library(ggpubr)
+library(igraph)
+library(viridis)
+
+# process / load data ---
+if (!("data.RData" %in% list.files())) {source("data_processing.R")}
+load("data.RData")
+
+# load helper functions ---
+source(file.path("..", "helpers.R"))
+
+# plot specifications ---
+SAVE <- TRUE
+EXPERIMENT_PREFIX <- "main_tickpol"
+RESOLUTION_DPI <- 300
+THEME_DESIGN <- 2
+plot_no <- 0
+
+# create directories ---
+dir.create("graphics", showWarnings = FALSE)
+dir.create(file.path("graphics", "pdf"), showWarnings = FALSE)
+dir.create(file.path("graphics", "png"), showWarnings = FALSE)
+```
+
+
+
+
+
+
+## Datasets
+
+The following code reads all the required datasets and formats them according to the requirements of the visualizations. This should result in the following datasets:
+
+  * `config`: all the configurations of the simulations [dataframe]
+  * `summary_statistics`: summary statistics on all simulation runs [dataframe]
+  * `summary_statistics_aggregated`: summary statistics on all simulation runs aggregated by replicate [dataframe]
+  * `mdata`: model data of all simulation runs [dataframe]
+  * `mdata_long`: model data of all simulation runs in long format [dataframe]
+  * `mdata_summarized`: model data of all simulation runs summarized by replicate [dataframe]
+  * `mdata_summarized_long`: model data of all simulation runs summarized by replicate in long format [dataframe]
+  * `summary_agent_states`: summary of the agent states over simulation time [dataframe]
+
+```{r inspect-datasets, eval=FALSE}
+config
+mdata
+mdata_long
+mdata_summarized
+mdata_summarized_long
+summary_statistics
+summary_statistics_aggregated
+summary_agent_states
+```
+
+
+
+
+
+
+## General Remarks
+
+There are two concepts of time in the following analysis: steps and days. In the model implementation, ten steps form one day. In the analysis, the data have been aggregated where appropriate.
+
+In many of the code blocks, the datasets are slightly modified to be suitable for visualization. These temporary datasets are named `tmp`. 
+
+There are two ways in which the dynamics of the epidemics are displayed: either as new cases per day or as count of agents that are infectious that day (or step respectively).  
+
+All but one factor, all configuration setups have been held constant for the experiments in this analysis. The default values are:
+  
+  * `Nodes`: 300
+  * `N0`: `3
+  * `K`: 3
+  * `AgentCount`: 1000
+  * `TransmissionProb`: 0.05
+  * `TestProb`: 0.8
+  * `QuarantineDuration`: 140
+  * `BehaviorReductionFactor`: 0.25
+  * `BehaviorActivated`: TRUE
+  * `TickAuthorityRecommendation` 1001
+  * `PublicSpaces`: 100
+  * `InitialInfectives`: 5
+  * `Iterations`: 1000
+
+The factor `TickAuthorityPolicy` has been sampled from [0, 300] in steps of 20, yielding 16 different configurations. 10 replicates have been run for each configuration.
+
+
+
+
+
+
+## Key Statistics
+
+There are four key statistics that I computed for all configurations of the experiment: 
+  
+  * *peak infective fraction:* peak fraction agents that are infective at the same time
+  * *tick of peak infective count:* point in (simulation) time where the peak infective count is reached
+  * *duration of the epidemic:* time between the start of the simulation and the recovery of the last infective agent (in ticks)
+  * *fraction of agents still susceptible after the simulation:* the fraction of agents that have never been infected during the entire simulation
+
+The aim of the analysis is to see if there are trends and differences between the configurations. 
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_peak")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on epidemic peak",
+  x = "Step of policy", 
+  y = "Peak fraction of infective agents",
+  caption = "Dots indicate the mean, error bars the standard error."
+)
+
+# plotting ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = PeakInfectiveFractionMean)) +
+    geom_line() +
+    geom_point(size = 2) +
+    geom_errorbar(
+      aes(
+        ymin = PeakInfectiveFractionMean - PeakInfectiveFractionSE, 
+        ymax = PeakInfectiveFractionMean + PeakInfectiveFractionSE
+      ),
+      width = 10
+    ) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.05), limits = c(0.45, 1)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "step_of_peak")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on step of epidemic peak",
+  x = "Step of policy", 
+  y = "Step of epidemic peak",
+  caption = "Dots indicate the mean, error bars the standard error."
+)
+
+# plotting ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = TickOfPeakInfectiveCountMean)) +
+    geom_line() +
+    geom_point(size = 2) +
+    geom_errorbar(
+      aes(
+        ymin = TickOfPeakInfectiveCountMean - TickOfPeakInfectiveCountSE, 
+        ymax = TickOfPeakInfectiveCountMean + TickOfPeakInfectiveCountSE
+      ),
+      width = 10
+    ) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50), limits = c(190, 600)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_duration")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on duration of epidemic",
+  x = "Step of policy", 
+  y = "Duration of epidemic",
+  caption = "Dots indicate the mean, error bars the standard error."
+)
+
+# plotting ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = DurationOfEpidemicMean)) +
+    geom_line() +
+    geom_point(size = 2) +
+    geom_errorbar(
+      aes(
+        ymin = DurationOfEpidemicMean - DurationOfEpidemicSE, 
+        ymax = DurationOfEpidemicMean + DurationOfEpidemicSE
+      ),
+      width = 10
+    ) +  
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50), limits = c(600, 1000)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "fraction_susceptibles")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on fraction of remaining susceptibles",
+  x = "Step of policy", 
+  y = "Fraction of susceptibles",
+  caption = "Dots indicate the mean, error bars the standard error."
+)
+
+# plotting ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = FractionStillSusceptibleMean)) +
+    geom_line() +
+    geom_point(size = 2) +
+    geom_errorbar(
+      aes(
+        ymin = FractionStillSusceptibleMean - FractionStillSusceptibleSE, 
+        ymax = FractionStillSusceptibleMean + FractionStillSusceptibleSE
+      ),
+      width = 10
+    ) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.005), limits = c(0, 0.05)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "main_effects")
+width <- 9
+height <- 6
+  
+# plotting p1 ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = PeakInfectiveFractionMean)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = PeakInfectiveFractionMean - PeakInfectiveFractionSE, 
+        ymax = PeakInfectiveFractionMean + PeakInfectiveFractionSE
+      ),
+      width = 0
+    ) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.1), limits = c(0.45, 1)) +
+    labs(
+      title = "Effect on epidemic peak",
+      x = "Step of policy", 
+      y = "Peak fraction of infective agents"
+    ) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r = 5)),
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7)
+    ) +
+    NULL -> p1
+
+# plotting p2 ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = TickOfPeakInfectiveCountMean)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = TickOfPeakInfectiveCountMean - TickOfPeakInfectiveCountSE, 
+        ymax = TickOfPeakInfectiveCountMean + TickOfPeakInfectiveCountSE
+      ),
+      width = 0
+    ) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50), limits = c(190, 600)) +
+    labs(
+      title = "Effect on step of epidemic peak",
+      x = "Step of policy", 
+      y = "Step of epidemic peak"
+    ) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r = 5)),
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7)
+    ) +
+    NULL -> p2
+
+# plotting p3 ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = DurationOfEpidemicMean)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = DurationOfEpidemicMean - DurationOfEpidemicSE, 
+        ymax = DurationOfEpidemicMean + DurationOfEpidemicSE
+      ),
+      width = 0
+    ) +  
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50)) +
+      labs(
+        title = "Effect on duration of epidemic",
+        x = "Step of policy", 
+        y = "Duration of epidemic"
+      ) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r = 5)),
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7)
+    ) +
+    NULL -> p3
+
+# plotting p4 ---
+summary_statistics_aggregated %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = FractionStillSusceptibleMean)) +
+    geom_line() +
+    geom_point(size = 1) +
+    geom_errorbar(
+      aes(
+        ymin = FractionStillSusceptibleMean - FractionStillSusceptibleSE, 
+        ymax = FractionStillSusceptibleMean + FractionStillSusceptibleSE
+      ),
+      width = 0
+    ) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.01)) +
+    labs(
+      title = "Effect on fraction of remaining susceptibles",
+      x = "Step of policy", 
+      y = "Fraction of susceptibles"
+    ) +
+    theme_thesis(plot_margin = 10, design = THEME_DESIGN) +
+    theme(
+      plot.title = element_text(size = 12, margin = margin(b = 10)),
+      plot.margin = margin(t = 10, b = 10, l = 20, r = 10),
+      axis.title.x = element_text(size = 9, margin = margin(t = 5)),
+      axis.title.y = element_text(size = 9, margin = margin(r = 5)),
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7)
+    ) +
+    NULL -> p4
+
+# arranging plots ---
+ggarrange(p1, p2, p3, p4, labels = c("A", "B", "C", "D"), hjust = -0.3, vjust = 0.5) %>% 
+  annotate_figure(
+    bottom = text_grob(
+      "The effects of the timing of the policy.\nDots indicate the mean, error bars the standard error.", 
+      size = 8, hjust = 1, x = 1
+    )
+  ) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)
+
+# reset ---
+rm(filename, height, p1, p2, p3, p4, width)
+```
+
+
+
+
+
+
+## Key Statistics (Detailed)
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_peak_detailed")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on epidemic peak",
+  x = "Step of policy", 
+  y = "Peak fraction of infective agents"
+)
+
+# plotting ---
+summary_statistics %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = PeakInfectiveFraction)) +
+    geom_point(size = 2, alpha = 0.2) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.05), limits = c(0.4, 1)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "step_of_peak_detailed")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on step of epidemic peak",
+  x = "Step of policy", 
+  y = "Step of epidemic peak"
+)
+
+# plotting ---
+summary_statistics %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = TickOfPeakInfectiveCount)) +
+    geom_point(size = 2, alpha = 0.2) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50), limits = c(100, 700)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "epidemic_duration_detailed")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on duration of epidemic",
+  x = "Step of policy", 
+  y = "Duration of epidemic"
+)
+
+# plotting ---
+summary_statistics %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = DurationOfEpidemic)) +
+    geom_point(size = 2, alpha = 0.2) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1000, by = 50), limits = c(550, 1000)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "fraction_susceptibles_detailed")
+width <- 7
+height <- 5
+labs <- c(
+  title = "Effect of step of policy on fraction of remaining susceptibles",
+  x = "Step of policy", 
+  y = "Fraction of susceptibles"
+)
+
+# plotting ---
+summary_statistics %>% 
+  ggplot(aes(x = TickAuthorityPolicy, y = FractionStillSusceptible)) +
+    geom_point(size = 2, alpha = 0.2) +
+    scale_x_continuous(breaks = seq(0, 300, by = 20)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.005), limits = c(0, 0.06)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, width)
+```
+
+
+
+
+
+
+## Epidemic Curves by Tick of Policy
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "i_curves")
+width <- 8
+height <- 7
+
+# data formatting ---
+mdata_summarized_long %>% 
+  filter(Concept == "ICountLower" | Concept == "ICountUpper") %>% 
+  right_join(config %>% select(Config, TickAuthorityPolicy), by = "Config") %>% 
+  filter(TickAuthorityPolicy <= 200 & TickAuthorityPolicy %% 40 == 0) %>% 
+  group_by(TickAuthorityPolicy, Step) %>% 
+  summarize(MeanFraction = mean(Fraction)) %>% 
+  ungroup() -> tmp1
+
+tmp1$TickAuthorityPolicy %<>% factor(levels = seq(0, 200, by = 40))
+
+mdata_summarized_long %>% 
+  filter(Concept == "ICumulativeLower" | Concept == "ICumulativeUpper") %>% 
+  right_join(config %>% select(Config, TickAuthorityPolicy), by = "Config") %>% 
+  filter(TickAuthorityPolicy <= 200 & TickAuthorityPolicy %% 40 == 0) %>% 
+  group_by(TickAuthorityPolicy, Step) %>% 
+  summarize(MeanFraction = mean(Fraction)) %>% 
+  ungroup() -> tmp2
+
+tmp2$TickAuthorityPolicy %<>% factor(levels = seq(0, 200, by = 40))
+
+# plotting ---
+tmp1 %>% 
+  ggplot(aes(x = Step, y = MeanFraction, color = TickAuthorityPolicy)) +
+    geom_line(size = 2, alpha = 0.6) +
+    scale_x_continuous(breaks = seq(0, 1000, by = 100), limits = c(0, 1000)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    scale_color_viridis_d(option = "magma") +
+    labs(
+      title = "Infective curves", 
+      x = "Step", 
+      y = "Fraction of agents"
+    ) +
+    guides(color = guide_legend(title = "Step of policy", reverse = TRUE)) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(legend.title = element_text()) +
+    NULL -> p1
+
+tmp2 %>% 
+  ggplot(aes(x = Step, y = MeanFraction, color = TickAuthorityPolicy)) +
+    geom_line(size = 2, alpha = 0.6) +
+    scale_x_continuous(breaks = seq(0, 1000, by = 100), limits = c(0, 1000)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+    scale_color_viridis_d(option = "magma") +
+    labs(
+      title = "Infective curves (cumulated)", 
+      x = "Step", 
+      y = "Fraction of agents"
+    ) +
+    guides(color = guide_legend(title = "Step of policy", reverse = TRUE)) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    theme(legend.title = element_text()) +
+    NULL -> p2
+
+# arrange plots ---
+ggarrange(p1, p2, labels = c("A", "B"), ncol = 1, common.legend = TRUE, legend = "right") %>% 
+  annotate_figure(bottom = text_grob("Aggregations over all replicates", size = 8, hjust = 1, x = 1)) +
+  theme_thesis_arrange(plot_margin = 15, design = THEME_DESIGN)
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, p1, p2, tmp1, tmp2, width)
+```
+
+
+
+
+
+
+## Contagion Dynamics
+
+```{r}
+# generics ---
+plot_no <- plot_no + 1
+filename <- paste0(EXPERIMENT_PREFIX, "_", stringr::str_pad(plot_no, 2, "left", "0"), "_", "contagion")
+width <- 8
+height <- 8
+labs <- c(
+  title = "New cases per day", 
+  x = "Day", 
+  y = "Fraction of agents",
+  caption = "New cases per day split by start of the policy (aggregated over all replicates).\nThe blue dashed lines indicate the start of the policy"
+)
+
+# data formatting ---
+mdata_long %>% 
+  inner_join(config %>% select(Config, TickAuthorityPolicy), by = "Config") %>% 
+  select(-Config, -Step) %>% 
+  filter(Concept == "NewCasesReal") %>% 
+  group_by(TickAuthorityPolicy, Replicate, Day, Concept) %>%
+  summarize(Fraction = sum(Fraction)) %>%
+  ungroup() %>% 
+  group_by(TickAuthorityPolicy, Day) %>% 
+  summarize(Fraction = mean(Fraction)) %>% 
+  ungroup() %>% 
+  filter(TickAuthorityPolicy <= 200 & TickAuthorityPolicy %% 40 == 0) -> tmp
+
+# plotting ---
+tmp %>% 
+  ggplot(aes(x = Day)) +
+    geom_bar(aes(y = Fraction), stat = "identity", width = 0.5) +
+    geom_vline(aes(xintercept = TickAuthorityPolicy / 10), color = "royalblue1", linetype = "dashed", size = 0.7) +
+    facet_wrap(. ~ TickAuthorityPolicy / 10, ncol = 1, strip.position = "right") +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.02), limits = c(0, 0.1)) +
+    labs(title = labs["title"], x = labs["x"], y = labs["y"], caption = labs["caption"]) +
+    theme_thesis(plot_margin = 15, design = THEME_DESIGN) +
+    NULL
+
+# saving ---
+if (SAVE) {save_plot(filename = filename, width = width, height = height, dpi = RESOLUTION_DPI)}
+
+# reset ---
+rm(filename, height, labs, tmp, width)
+```
