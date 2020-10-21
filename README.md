@@ -28,4 +28,4 @@ To reproduce my Master thesis experiments, execute the following:
 julia>include("experiments.jl")
 ```
 
-This will run all simulations that are setup in the scripts in the `config` folder. Please be advised to only run this script if you have enough storage on your device. Even though the data is compressed by the module, the simulations create a substantial amount of data.
+This will run all simulations that are setup in the scripts in the `config` folder. Please be advised to only run this script if you have enough storage on your device. Even though the data is compressed by the module, the simulations create a substantial amount of data and run for an extended period of time.

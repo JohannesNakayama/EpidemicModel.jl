@@ -28,3 +28,4 @@ experiments/
 *.json
 *.feather
 *.7z
+.Rproj.user
