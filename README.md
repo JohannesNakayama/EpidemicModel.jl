@@ -33,4 +33,8 @@ This will run all simulations that are setup in the scripts in the `config` fold
 
 ## Analysis
 
-Once you have run the simulations, you can reproduce all analyses that I conducted. The analysis scripts for all experiments can be found in the folder `analysis`. Each subfolder contains an `.Rmd` script that recreates all analyses that have been run on the simulation data.
+Once you have run the simulations, you can reproduce all analyses that I conducted. The analysis scripts for all experiments can be found in the folder `analysis`. Each subfolder contains an `.Rmd` script that recreates all analyses that have been run on the simulation data. The analyses scripts were written under R 4.0.2 and require the following R packages: `tidyverse`, `magrittr`, `ggpubr`, `igraph` and `viridis`. All of these packages are available from CRAN:
+
+```
+R>install.packages("<PACKAGE_NAME>")
+```
