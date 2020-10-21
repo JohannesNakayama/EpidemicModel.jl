@@ -1,6 +1,6 @@
 # EpidemicModel.jl
 
-This agent-based model was implemented with [Agents.jl](https://juliadynamics.github.io/Agents.jl/stable/). It depicts the outbreak of an epidemic in a heterogeneous agent population. 
+Simulation of an epidemic in a heterogeneous agent population to explore the effects of different mitigative measures such as recommendations, policies as well as individual mitigative behaviors such as mask wearing. 
 
 
 ## Prerequesites
