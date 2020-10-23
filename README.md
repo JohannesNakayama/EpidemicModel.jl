@@ -38,3 +38,8 @@ Once you have run the simulations, you can reproduce all analyses that I conduct
 ```
 R>install.packages("<PACKAGE_NAME>")
 ```
+
+
+## Data
+
+The data can also be found at https://osf.io/kfmsx/.
